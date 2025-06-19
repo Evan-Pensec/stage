@@ -1,0 +1,155 @@
+---
+title: "Mon Graphique UMAP Interactif"
+output: 
+  html_document:
+    self_contained: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+# Ces lignes installent automatiquement les packages si ils manquent
+if (!require("plotly")) install.packages("plotly")
+if (!require("dplyr")) install.packages("dplyr")
+if (!require("DT")) install.packages("DT")
+
+library(plotly)
+library(dplyr)
+library(DT)
+
+# ========================================
+# 👇 MODIFIE CES PARAMÈTRES POUR TES DONNÉES
+# ========================================
+
+# Nom de ton fichier RDS
+nom_fichier_rds <- "rn_TEC2.rds"
+
+# Nom de la colonne qui contient les types de cellules dans les métadonnées
+nom_colonne_type <- "seurat_clusters"
+
+# Couleurs pour chaque type de cellule (optionnel - sera généré automatiquement si pas défini)
+mes_couleurs <- c(
+  "cTEC" = "#FF6B6B",           # Rouge
+  "CCL21+ mTEC" = "#4ECDC4",    # Turquoise  
+  "mTEChigh" = "#45B7D1",       # Bleu
+  "mTEC post-Aire" = "#96CEB4", # Vert
+  "Ciliated mTEC" = "#FECA57"   # Jaune
+)
+
+# ========================================
+# CHARGEMENT ET PRÉPARATION DES DONNÉES
+# ========================================
+
+# Vérifie si le fichier existe
+if (!file.exists(nom_fichier_rds)) {
+  stop(paste("Le fichier", nom_fichier_rds, "n'existe pas dans le répertoire courant."))
+}
+
+# Charge l'objet Seurat
+mon_objet <- readRDS(nom_fichier_rds)
+
+# Vérifie si l'objet a des réductions UMAP
+if (!"umap" %in% names(mon_objet@reductions)) {
+  stop("L'objet ne contient pas de réduction UMAP. Assure-toi d'avoir fait RunUMAP() avant.")
+}
+
+# Vérifie si la colonne existe dans les métadonnées
+if (!nom_colonne_type %in% colnames(mon_objet@meta.data)) {
+  cat("Colonnes disponibles dans les métadonnées:\n")
+  print(colnames(mon_objet@meta.data))
+  stop(paste("La colonne", nom_colonne_type, "n'existe pas dans les métadonnées."))
+}
+
+# Prépare le dataframe pour le graphique
+mes_donnees <- data.frame(
+   UMAP_1 = mon_objet@reductions$umap@cell.embeddings[,1],
+   UMAP_2 = mon_objet@reductions$umap@cell.embeddings[,2],
+   type_cellule = mon_objet@meta.data[[nom_colonne_type]]
+)
+
+# Supprime les lignes avec des valeurs manquantes
+mes_donnees <- mes_donnees[complete.cases(mes_donnees), ]
+
+# Génère des couleurs automatiquement si pas assez de couleurs définies
+types_uniques <- unique(mes_donnees$type_cellule)
+if (length(mes_couleurs) < length(types_uniques)) {
+  # Génère des couleurs automatiquement
+  couleurs_auto <- rainbow(length(types_uniques))
+  names(couleurs_auto) <- types_uniques
+  mes_couleurs <- couleurs_auto
+  cat("Couleurs générées automatiquement pour", length(types_uniques), "types de cellules\n")
+}
+```
+
+# Graphique UMAP
+
+**Comment utiliser :** Clique sur les noms dans la légende pour cacher/montrer les types de cellules. Tu peux aussi sélectionner une zone pour zoomer et double cliquer pour dézoomer. Si tu doubles cliques sur une des couleurs dans la légende alors ça l'isolera.
+
+```{r graphique, echo=FALSE}
+# Crée le graphique interactif
+mon_graphique <- plot_ly(
+  data = mes_donnees,
+  x = ~UMAP_1, 
+  y = ~UMAP_2, 
+  color = ~type_cellule,
+  colors = mes_couleurs,
+  type = "scatter",
+  mode = "markers",
+  marker = list(size = 4, opacity = 0.7),
+  text = ~paste("Type:", type_cellule, "<br>X:", round(UMAP_1, 2), "<br>Y:", round(UMAP_2, 2)),
+  hoverinfo = "text"
+) %>%
+layout(
+  title = paste("Cellules sur UMAP -", nom_fichier_rds),
+  xaxis = list(title = "UMAP_1"),
+  yaxis = list(title = "UMAP_2"),
+  showlegend = TRUE
+)
+
+mon_graphique
+```
+
+## Résumé de mes données
+
+```{r tableau, echo=FALSE}
+# Compte combien de cellules par type
+resume <- mes_donnees %>%
+  group_by(type_cellule) %>%
+  summarise(
+    Nombre = n(),
+    Pourcentage = round(n() / nrow(mes_donnees) * 100, 1),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Nombre))
+
+datatable(resume, 
+          options = list(dom = 't'), 
+          caption = "Nombre et pourcentage de cellules par type")
+```
+
+---
+
+## 🔧 Instructions pour utiliser avec tes propres données
+
+**Pour utiliser ce dashboard avec ton fichier RDS :**
+
+1. **Place ton fichier RDS** dans le même dossier que ce fichier .Rmd
+
+2. **Modifie les paramètres** au début du code :
+   - `nom_fichier_rds` : remplace par le nom de ton fichier RDS
+   - `nom_colonne_type` : remplace par le nom de la colonne qui contient tes types de cellules
+   - `mes_couleurs` : optionnel, modifie les couleurs si tu veux
+
+3. **Ton objet RDS doit contenir :**
+   - Un objet Seurat avec une réduction UMAP (`RunUMAP()` déjà fait)
+   - Des métadonnées avec une colonne pour les types de cellules
+
+4. **Dans RStudio**, clique sur "Knit" ou utilise : `rmarkdown::render("ton_fichier.Rmd")`
+
+**Exemple de structure d'objet Seurat attendue :**
+```r
+# Ton objet doit avoir :
+objet@reductions$umap@cell.embeddings  # Coordonnées UMAP
+objet@meta.data$ton_type_de_cellule    # Types de cellules
+```
+
+**C'est tout ! Tu auras un fichier HTML interactif !** 🎉
