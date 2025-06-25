@@ -1,155 +1,836 @@
 ---
-title: "Mon Graphique UMAP Interactif"
-output: 
-  html_document:
-    self_contained: true
-    theme: flatly
+title: "Analyse UMAP - Types Cellulaires Biologiques (WT vs KO)"
+output:
+html_document:
+self_contained: true
+theme: flatly
+toc: true
+toc_float: true
+code_folding: hide
+css: "mon-style.css"
 ---
 
 ```{r setup, include=FALSE}
-# Ces lignes installent automatiquement les packages si ils manquent
-if (!require("plotly")) install.packages("plotly")
-if (!require("dplyr")) install.packages("dplyr")
-if (!require("DT")) install.packages("DT")
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
-library(plotly)
-library(dplyr)
-library(DT)
+# Installation automatique des packages si nécessaire
+packages_requis <- c("plotly", "dplyr", "DT", "RColorBrewer", "viridis", 
+                     "htmlwidgets", "crosstalk", "jsonlite", "htmltools", 
+                     "tidyr")
+
+for(pkg in packages_requis) {
+  if (!require(pkg, character.only = TRUE)) {
+    install.packages(pkg)
+    library(pkg, character.only = TRUE)
+  }
+}
 
 # ========================================
-# 👇 MODIFIE CES PARAMÈTRES POUR TES DONNÉES
+# 🔧 CONFIGURATION - MODIFIEZ ICI
 # ========================================
 
-# Nom de ton fichier RDS
-nom_fichier_rds <- "rn_TEC2.rds"
+# Nom de votre fichier RDS créé par le script d'extraction
+nom_fichier_rds <- "data.rds"
 
-# Nom de la colonne qui contient les types de cellules dans les métadonnées
-nom_colonne_type <- "seurat_clusters"
-
-# Couleurs pour chaque type de cellule (optionnel - sera généré automatiquement si pas défini)
-mes_couleurs <- c(
-  "cTEC" = "#FF6B6B",           # Rouge
-  "CCL21+ mTEC" = "#4ECDC4",    # Turquoise  
-  "mTEChigh" = "#45B7D1",       # Bleu
-  "mTEC post-Aire" = "#96CEB4", # Vert
-  "Ciliated mTEC" = "#FECA57"   # Jaune
+# Couleurs personnalisées pour chaque type cellulaire
+mes_couleurs_personnalisees <- c(
+  "cTEC" = "#FF6B6B",
+  "CCL21+ mTEC" = "#4ECDC4",
+  "mTEChigh" = "#45B7D1",
+  "mTEC" = "#96CEB4",
+  "mTEC post-Aire" = "#96CEB4",
+  "Ciliated mTEC" = "#FECA57",
+  "Tuft-like mTEC" = "#FD79A8",
+  "Proliferating TEC" = "#A29BFE",
+  "Immature TEC" = "#FFA07A",
+  "Mature TEC" = "#98FB98",
+  "Type cellulaire 18" = "#FF8C69",
+  "Type cellulaire 19" = "#DDA0DD"
 )
 
 # ========================================
 # CHARGEMENT ET PRÉPARATION DES DONNÉES
 # ========================================
 
-# Vérifie si le fichier existe
 if (!file.exists(nom_fichier_rds)) {
-  stop(paste("Le fichier", nom_fichier_rds, "n'existe pas dans le répertoire courant."))
+  stop(paste("Le fichier", nom_fichier_rds, "n'existe pas."))
 }
 
-# Charge l'objet Seurat
-mon_objet <- readRDS(nom_fichier_rds)
+cat("Chargement des données...\n")
+mes_donnees <- readRDS(nom_fichier_rds)
 
-# Vérifie si l'objet a des réductions UMAP
-if (!"umap" %in% names(mon_objet@reductions)) {
-  stop("L'objet ne contient pas de réduction UMAP. Assure-toi d'avoir fait RunUMAP() avant.")
+colonnes_requises <- c("UMAP_1", "UMAP_2", "type_cellule")
+if (!all(colonnes_requises %in% colnames(mes_donnees))) {
+  cat("Colonnes disponibles :", paste(colnames(mes_donnees), collapse = ", "), "\n")
+  stop("Structure de données incorrecte")
 }
 
-# Vérifie si la colonne existe dans les métadonnées
-if (!nom_colonne_type %in% colnames(mon_objet@meta.data)) {
-  cat("Colonnes disponibles dans les métadonnées:\n")
-  print(colnames(mon_objet@meta.data))
-  stop(paste("La colonne", nom_colonne_type, "n'existe pas dans les métadonnées."))
+# Identifier les colonnes de gènes
+colonnes_metadata <- c("UMAP_1", "UMAP_2", "type_cellule", "type_cellule_original", "sample", "nFeature_RNA", "nCount_RNA", "condition", "genotype")
+colonnes_genes <- setdiff(colnames(mes_donnees), colonnes_metadata)
+cat("Nombre de gènes disponibles :", length(colonnes_genes), "\n")
+
+# Vérifier si Epcam est présent
+if ("Epcam" %in% colonnes_genes) {
+  cat("✓ Gène Epcam trouvé dans les données\n")
+} else {
+  cat("✗ Gène Epcam NON trouvé. Gènes similaires :\n")
+  genes_similaires <- colonnes_genes[grepl("epcam|Epcam|EPCAM", colonnes_genes, ignore.case = TRUE)]
+  if (length(genes_similaires) > 0) {
+    cat(paste(genes_similaires, collapse = ", "), "\n")
+  } else {
+    cat("Aucun gène similaire à Epcam trouvé\n")
+  }
 }
 
-# Prépare le dataframe pour le graphique
-mes_donnees <- data.frame(
-   UMAP_1 = mon_objet@reductions$umap@cell.embeddings[,1],
-   UMAP_2 = mon_objet@reductions$umap@cell.embeddings[,2],
-   type_cellule = mon_objet@meta.data[[nom_colonne_type]]
+mes_donnees <- mes_donnees[complete.cases(mes_donnees[,colonnes_requises]), ]
+
+# ========================================
+# GESTION DES CONDITIONS WT/KO
+# ========================================
+
+# Déterminer la colonne de condition (adaptez selon vos données)
+colonne_condition <- NULL
+if ("condition" %in% colnames(mes_donnees)) {
+  colonne_condition <- "condition"
+} else if ("genotype" %in% colnames(mes_donnees)) {
+  colonne_condition <- "genotype"
+} else if ("sample" %in% colnames(mes_donnees)) {
+  # Essayer de déduire la condition depuis le nom de l'échantillon
+  samples_uniques <- unique(mes_donnees$sample)
+  if (any(grepl("WT|wt|Wild", samples_uniques, ignore.case = TRUE)) && 
+      any(grepl("KO|ko|Knockout", samples_uniques, ignore.case = TRUE))) {
+    mes_donnees$condition <- ifelse(grepl("WT|wt|Wild", mes_donnees$sample, ignore.case = TRUE), "WT", "KO")
+    colonne_condition <- "condition"
+  }
+}
+
+# Si aucune condition n'est trouvée, créer une condition par défaut
+if (is.null(colonne_condition)) {
+  cat("⚠️ Aucune colonne de condition trouvée. Création d'une division aléatoire WT/KO pour démonstration.\n")
+  set.seed(123)
+  mes_donnees$condition <- sample(c("WT", "KO"), nrow(mes_donnees), replace = TRUE, prob = c(0.5, 0.5))
+  colonne_condition <- "condition"
+}
+
+cat("Colonne de condition utilisée :", colonne_condition, "\n")
+cat("Conditions trouvées :", paste(unique(mes_donnees[[colonne_condition]]), collapse = ", "), "\n")
+
+# Standardiser les noms de conditions
+mes_donnees$condition_std <- mes_donnees[[colonne_condition]]
+mes_donnees$condition_std <- gsub(".*[Ww][Tt].*|.*[Ww]ild.*", "WT", mes_donnees$condition_std)
+mes_donnees$condition_std <- gsub(".*[Kk][Oo].*|.*[Kk]nockout.*", "KO", mes_donnees$condition_std)
+
+# Vérifier que nous avons bien WT et KO
+conditions_finales <- unique(mes_donnees$condition_std)
+if (!"WT" %in% conditions_finales) {
+  # Prendre la première condition comme WT
+  mes_donnees$condition_std[mes_donnees$condition_std == conditions_finales[1]] <- "WT"
+}
+if (!"KO" %in% conditions_finales && length(conditions_finales) > 1) {
+  # Prendre la deuxième condition comme KO
+  mes_donnees$condition_std[mes_donnees$condition_std == conditions_finales[2]] <- "KO"
+}
+
+cat("Répartition finale des conditions :\n")
+print(table(mes_donnees$condition_std))
+
+# ========================================
+# 🏷️ CORRESPONDANCE TYPES CELLULAIRES
+# ========================================
+
+correspondance_types <- c(
+  "0" = "cTEC",
+  "1" = "CCL21+ mTEC", 
+  "2" = "mTEChigh",
+  "3" = "mTEC",
+  "4" = "mTEC post-Aire",
+  "5" = "Ciliated mTEC",
+  "7" = "Tuft-like mTEC",
+  "8" = "Proliferating TEC",
+  "9" = "Immature TEC",
+  "12" = "Mature TEC",
+  "18" = "Type cellulaire 18",
+  "19" = "Type cellulaire 19"
 )
 
-# Supprime les lignes avec des valeurs manquantes
-mes_donnees <- mes_donnees[complete.cases(mes_donnees), ]
+mes_donnees$type_cellule_original <- mes_donnees$type_cellule
+mes_donnees$type_cellule <- correspondance_types[as.character(mes_donnees$type_cellule)]
 
-# Génère des couleurs automatiquement si pas assez de couleurs définies
-types_uniques <- unique(mes_donnees$type_cellule)
-if (length(mes_couleurs) < length(types_uniques)) {
-  # Génère des couleurs automatiquement
-  couleurs_auto <- rainbow(length(types_uniques))
-  names(couleurs_auto) <- types_uniques
-  mes_couleurs <- couleurs_auto
-  cat("Couleurs générées automatiquement pour", length(types_uniques), "types de cellules\n")
+if(any(is.na(mes_donnees$type_cellule))) {
+  cat("Attention: certains types cellulaires n'ont pas de correspondance!\n")
+  types_manquants <- unique(mes_donnees$type_cellule_original[is.na(mes_donnees$type_cellule)])
+  cat("Types manquants:", paste(types_manquants, collapse = ", "), "\n")
+  
+  mes_donnees$type_cellule[is.na(mes_donnees$type_cellule)] <- 
+    paste(mes_donnees$type_cellule_original[is.na(mes_donnees$type_cellule)])
 }
+
+cat("Données chargées avec succès !\n")
+cat("Nombre de cellules :", nrow(mes_donnees), "\n")
+cat("Types cellulaires trouvés :\n")
+
+types_cellulaires <- table(mes_donnees$type_cellule)
+print(types_cellulaires)
+
+# Génération automatique de couleurs
+types_uniques <- unique(mes_donnees$type_cellule)
+n_types <- length(types_uniques)
+
+if (n_types > length(mes_couleurs_personnalisees)) {
+  couleurs_supplementaires <- rainbow(n_types - length(mes_couleurs_personnalisees))
+  noms_manquants <- setdiff(types_uniques, names(mes_couleurs_personnalisees))
+  names(couleurs_supplementaires) <- noms_manquants
+  couleurs_finales <- c(mes_couleurs_personnalisees, couleurs_supplementaires)
+} else {
+  couleurs_finales <- mes_couleurs_personnalisees[types_uniques]
+  types_sans_couleur <- setdiff(types_uniques, names(mes_couleurs_personnalisees))
+  if (length(types_sans_couleur) > 0) {
+    couleurs_auto <- viridis::viridis(length(types_sans_couleur))
+    names(couleurs_auto) <- types_sans_couleur
+    couleurs_finales <- c(mes_couleurs_personnalisees, couleurs_auto)
+  }
+}
+
+cat("Couleurs assignées à", length(couleurs_finales), "types cellulaires\n")
+
+# ========================================
+# CRÉATION DES DONNÉES JSON POUR WT ET KO
+# ========================================
+
+# Créer un échantillon de gènes pour éviter un fichier trop volumineux
+genes_interesse <- c("Epcam", "Foxp3", "Cd4", "Cd8a", "Cd3e", "Aire")
+genes_disponibles <- intersect(genes_interesse, colonnes_genes)
+autres_genes <- setdiff(colonnes_genes, genes_interesse)[1:min(100, length(setdiff(colonnes_genes, genes_interesse)))]
+genes_a_inclure <- c(genes_disponibles, autres_genes[!is.na(autres_genes)])
+
+cat("Gènes inclus dans le JSON :", length(genes_a_inclure), "\n")
+cat("Gènes d'intérêt trouvés :", paste(genes_disponibles, collapse = ", "), "\n")
+
+# Séparer les données WT et KO
+donnees_wt <- mes_donnees[mes_donnees$condition_std == "WT", ]
+donnees_ko <- mes_donnees[mes_donnees$condition_std == "KO", ]
+
+# Créer les données d'expression pour chaque condition
+create_gene_data <- function(data_subset, genes_list) {
+  gene_data <- list()
+  for (gene in genes_list) {
+    if (gene %in% colnames(data_subset)) {
+      gene_data[[gene]] <- as.numeric(data_subset[[gene]])
+    }
+  }
+  return(gene_data)
+}
+
+# Créer le fichier JSON avec les deux conditions
+donnees_js <- list(
+  WT = list(
+    cellData = list(
+      umap1 = as.numeric(donnees_wt$UMAP_1),
+      umap2 = as.numeric(donnees_wt$UMAP_2),
+      types = as.character(donnees_wt$type_cellule)
+    ),
+    geneData = create_gene_data(donnees_wt, genes_a_inclure)
+  ),
+  KO = list(
+    cellData = list(
+      umap1 = as.numeric(donnees_ko$UMAP_1),
+      umap2 = as.numeric(donnees_ko$UMAP_2),
+      types = as.character(donnees_ko$type_cellule)
+    ),
+    geneData = create_gene_data(donnees_ko, genes_a_inclure)
+  ),
+  availableGenes = genes_a_inclure,
+  colors = couleurs_finales
+)
+
+# Sauvegarder en JSON
+write_json(donnees_js, "dashboard_data_wt_ko.json", auto_unbox = TRUE)
+cat("Fichier JSON créé avec", length(genes_a_inclure), "gènes pour WT et KO\n")
+cat("Cellules WT:", nrow(donnees_wt), "| Cellules KO:", nrow(donnees_ko), "\n")
 ```
 
-# Graphique UMAP
+# Comparaison WT vs KO
 
-**Comment utiliser :** Clique sur les noms dans la légende pour cacher/montrer les types de cellules. Tu peux aussi sélectionner une zone pour zoomer et double cliquer pour dézoomer. Si tu doubles cliques sur une des couleurs dans la légende alors ça l'isolera.
+## 🔍 Recherche de Gènes
 
-```{r graphique, echo=FALSE}
-# Crée le graphique interactif
-mon_graphique <- plot_ly(
-  data = mes_donnees,
-  x = ~UMAP_1, 
-  y = ~UMAP_2, 
-  color = ~type_cellule,
-  colors = mes_couleurs,
-  type = "scatter",
-  mode = "markers",
-  marker = list(size = 4, opacity = 0.7),
-  text = ~paste("Type:", type_cellule, "<br>X:", round(UMAP_1, 2), "<br>Y:", round(UMAP_2, 2)),
-  hoverinfo = "text"
+```{r gene_search_interface, echo=FALSE}
+library(htmltools)
+
+# Interface de recherche simplifiée
+div(
+  style = "background: linear-gradient(135deg, #000000 0%, #40434e 100%); padding: 20px; border-radius: 15px; margin: 20px 0; color: white;",
+  
+  h3("Recherche de Gènes", 
+     style = "text-align: center; margin-bottom: 20px; color: white;"),
+  
+  div(
+    style = "background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; backdrop-filter: blur(10px);",
+    
+    # Input de recherche
+    div(
+      style = "position: relative; margin-bottom: 15px;",
+      tags$input(
+        type = "text",
+        id = "gene-search",
+        placeholder = "Tapez le nom d'un gène (ex: Epcam, Foxp3, Cd4...)",
+        style = "color: black; width: 100%; padding: 12px 15px; border: none; border-radius: 25px; font-size: 16px; box-sizing: border-box;"
+      )
+    ),
+    
+    # Div pour les suggestions
+    div(id = "gene-suggestions",
+        style = "display: none; background: white; border-radius: 10px; max-height: 200px; overflow-y: auto; position: absolute; z-index: 1000; width: calc(100% - 30px); margin-top: 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"),
+    
+    # Boutons
+    div(
+      style = "display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center;",
+      
+      tags$button(
+        "Rechercher",
+        id = "search-btn",
+        onclick = "searchGene()",
+        style = "background: #4CAF50; color: white; border: none; padding: 12px 25px; border-radius: 25px; cursor: pointer; font-weight: bold; transition: all 0.3s;"
+      ),
+      
+      tags$button(
+        "Réinitialiser",
+        id = "reset-btn", 
+        onclick = "resetView()",
+        style = "background: #f44336; color: white; border: none; padding: 12px 25px; border-radius: 25px; cursor: pointer; font-weight: bold; transition: all 0.3s;"
+      )
+    )
+  ),
+  
+  # Zone de résultats
+  div(id = "gene-results", style = "margin-top: 20px;"),
+)
+```
+
+## Graphiques Comparatifs WT vs KO
+
+**Instructions d'utilisation :**  
+
+- **Recherche de gène** : Utilisez la barre de recherche pour visualiser l'expression d'un gène spécifique sur les deux conditions  
+
+- **Clic sur la légende** : Masquer/afficher un type cellulaire (en mode types cellulaires)  
+
+- **Double-clic sur la légende** : Isoler un seul type cellulaire  
+
+- **Sélection zone** : Zoomer sur une région  
+
+-  **Double-clic sur le graphique** : Réinitialiser le zoom  
+
+- **Survol** : Voir les détails de chaque cellule  
+
+```{r creation_graphiques_compares, echo=FALSE}
+# Séparer les données par condition
+donnees_wt <- mes_donnees[mes_donnees$condition_std == "WT", ]
+donnees_ko <- mes_donnees[mes_donnees$condition_std == "KO", ]
+
+# Fonction pour créer un graphique UMAP
+creer_graphique_umap <- function(data, titre, condition) {
+  plot_ly(
+    data = data,
+    x = ~UMAP_1, 
+    y = ~UMAP_2, 
+    color = ~type_cellule,
+    colors = couleurs_finales,
+    type = "scatter",
+    mode = "markers",
+    marker = list(
+      size = 4,
+      opacity = 0.7,
+      line = list(width = 0.5, color = "white")
+    ),
+    text = ~paste(
+      "<b>Condition:</b>", condition,
+      "<br><b>Type cellulaire:</b>", type_cellule,
+      "<br><b>Coordonnées:</b>", 
+      "X =", round(UMAP_1, 2), "| Y =", round(UMAP_2, 2),
+      if("sample" %in% colnames(data)) paste("<br><b>Échantillon:</b>", sample) else "",
+      if("nFeature_RNA" %in% colnames(data)) paste("<br><b>Nb gènes:</b>", nFeature_RNA) else "",
+      if("nCount_RNA" %in% colnames(data)) paste("<br><b>Nb transcrits:</b>", nCount_RNA) else ""
+    ),
+    hoverinfo = "text",
+    hovertemplate = "%{text}<extra></extra>",
+    showlegend = if(condition == "WT") TRUE else FALSE  # Afficher la légende seulement pour WT
+  ) %>%
+  layout(
+    title = list(
+      text = paste("<b>", titre, "</b><br>",
+                   "<i>", format(nrow(data), big.mark = " "), "cellules</i>"),
+      font = list(size = 16)
+    ),
+    xaxis = list(
+      title = "<b>UMAP_1</b>",
+      showgrid = TRUE,
+      gridcolor = "lightgray",
+      zeroline = TRUE,
+      zerolinecolor = "gray",
+      titlefont = list(size = 12)
+    ),
+    yaxis = list(
+      title = "<b>UMAP_2</b>",
+      showgrid = TRUE,
+      gridcolor = "lightgray",
+      zeroline = TRUE,
+      zerolinecolor = "gray",
+      titlefont = list(size = 12)
+    ),
+    plot_bgcolor = "white",
+    paper_bgcolor = "white",
+    margin = list(l = 50, r = 50, t = 80, b = 50)
+  )
+}
+
+# Créer les graphiques WT et KO
+graphique_wt <- creer_graphique_umap(donnees_wt, "WT (Wild Type)", "WT")
+graphique_ko <- creer_graphique_umap(donnees_ko, "KO (Knockout)", "KO")
+
+# Combiner les graphiques en utilisant subplot
+graphique_combine <- subplot(
+  graphique_wt, graphique_ko,
+  nrows = 1, 
+  shareY = TRUE,
+  titleX = TRUE,
+  margin = 0.05
 ) %>%
 layout(
-  title = paste("Cellules sur UMAP -", nom_fichier_rds),
-  xaxis = list(title = "UMAP_1"),
-  yaxis = list(title = "UMAP_2"),
-  showlegend = TRUE
+  title = list(
+    text = paste("<b>Comparaison UMAP des Types Cellulaires : WT vs KO</b><br>",
+                 "<i>Total:", format(nrow(mes_donnees), big.mark = " "), 
+                 "cellules •", length(types_uniques), "types cellulaires</i>"),
+    font = list(size = 18)
+  ),
+  legend = list(
+    orientation = "v",
+    x = 1.02,
+    y = 1,
+    bgcolor = "rgba(255,255,255,0.9)",
+    bordercolor = "gray",
+    borderwidth = 1,
+    font = list(size = 10)
+  ),
+  margin = list(r = 200, l = 50, t = 100, b = 50)
 )
 
-mon_graphique
+# Afficher le graphique combiné
+graphique_combine
 ```
 
-## Résumé de mes données
-
-```{r tableau, echo=FALSE}
-# Compte combien de cellules par type
-resume <- mes_donnees %>%
-  group_by(type_cellule) %>%
-  summarise(
-    Nombre = n(),
-    Pourcentage = round(n() / nrow(mes_donnees) * 100, 1),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(Nombre))
-
-datatable(resume, 
-          options = list(dom = 't'), 
-          caption = "Nombre et pourcentage de cellules par type")
+```{r graphique_conteneur_wt_ko, echo=FALSE}
+# Conteneur pour les graphiques dynamiques d'expression génique
+div(
+  id = "dynamic-plots-container",
+  style = "display: none; margin-top: 20px;"
+)
 ```
 
----
+```{r javascript_wt_ko, echo=FALSE}
+# Créer le fichier JavaScript séparément pour éviter les problèmes d'échappement
+js_code <- '
+// Configuration globale pour WT/KO
+let dashboardDataWTKO = null;
+let currentGeneWTKO = null;
 
-## 🔧 Instructions pour utiliser avec tes propres données
+// Charger les données depuis le fichier JSON WT/KO
+async function loadDashboardDataWTKO() {
+  try {
+    const response = await fetch("dashboard_data_wt_ko.json");
+    if (response.ok) {
+      dashboardDataWTKO = await response.json();
+      console.log("Données WT/KO chargées:", dashboardDataWTKO.availableGenes.length, "gènes disponibles");
+      console.log("Cellules WT:", dashboardDataWTKO.WT.cellData.umap1.length);
+      console.log("Cellules KO:", dashboardDataWTKO.KO.cellData.umap1.length);
+    } else {
+      throw new Error("Fichier JSON WT/KO non trouvé");
+    }
+  } catch (error) {
+    console.error("Erreur de chargement WT/KO:", error);
+    showMessage("Erreur de chargement des données WT/KO", "error");
+  }
+}
 
-**Pour utiliser ce dashboard avec ton fichier RDS :**
+// Initialisation
+document.addEventListener("DOMContentLoaded", async function() {
+  await loadDashboardDataWTKO();
+  if (dashboardDataWTKO) {
+    initializeGeneSearchWTKO();
+  }
+});
 
-1. **Place ton fichier RDS** dans le même dossier que ce fichier .Rmd
+function initializeGeneSearchWTKO() {
+  const geneSearchInput = document.getElementById("gene-search");
+  const suggestionsDiv = document.getElementById("gene-suggestions");
+  
+  if (geneSearchInput && dashboardDataWTKO && dashboardDataWTKO.availableGenes) {
+    geneSearchInput.addEventListener("input", function() {
+      const input = this.value.toLowerCase();
+      
+      if (input.length < 2) {
+        suggestionsDiv.style.display = "none";
+        return;
+      }
+      
+      const matches = dashboardDataWTKO.availableGenes.filter(gene => 
+        gene.toLowerCase().includes(input)
+      ).slice(0, 10);
+      
+      if (matches.length > 0) {
+        suggestionsDiv.innerHTML = matches.map(gene => 
+          `<div onclick="selectGene(\\\"${gene}\\\")" style="padding: 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; color: #333;" 
+          onmouseover="this.style.background=\\\"#f8f9fa\\\"" 
+          onmouseout="this.style.background=\\\"white\\\"">${gene}</div>`
+        ).join("");
+        suggestionsDiv.style.display = "block";
+      } else {
+        suggestionsDiv.innerHTML = "<div style=\\\"padding: 12px; color: #666; text-align: center;\\\">Aucun gène trouvé</div>";
+        suggestionsDiv.style.display = "block";
+      }
+    });
+    
+    geneSearchInput.addEventListener("keypress", function(e) {
+      if (e.key === "Enter") {
+        searchGene();
+      }
+    });
+  }
+}
 
-2. **Modifie les paramètres** au début du code :
-   - `nom_fichier_rds` : remplace par le nom de ton fichier RDS
-   - `nom_colonne_type` : remplace par le nom de la colonne qui contient tes types de cellules
-   - `mes_couleurs` : optionnel, modifie les couleurs si tu veux
+function selectGene(gene) {
+  document.getElementById("gene-search").value = gene;
+  document.getElementById("gene-suggestions").style.display = "none";
+}
 
-3. **Ton objet RDS doit contenir :**
-   - Un objet Seurat avec une réduction UMAP (`RunUMAP()` déjà fait)
-   - Des métadonnées avec une colonne pour les types de cellules
+// Fonction principale de recherche pour WT/KO
+async function searchGene() {
+  const geneName = document.getElementById("gene-search").value.trim();
+  
+  if (!geneName) {
+    showMessage("Veuillez entrer un nom de gène", "warning");
+    return;
+  }
+  
+  if (!dashboardDataWTKO) {
+    showMessage("Données WT/KO non chargées", "error");
+    return;
+  }
+  
+  currentGeneWTKO = geneName;
+  showMessage("Recherche en cours pour le gène " + geneName + " dans les conditions WT et KO...", "loading");
+  
+  // Vérifier si le gène existe dans nos données WT et KO
+  const hasGeneWT = dashboardDataWTKO.WT.geneData && dashboardDataWTKO.WT.geneData[geneName];
+  const hasGeneKO = dashboardDataWTKO.KO.geneData && dashboardDataWTKO.KO.geneData[geneName];
+  
+  if (hasGeneWT && hasGeneKO) {
+    const geneExpressionWT = dashboardDataWTKO.WT.geneData[geneName];
+    const geneExpressionKO = dashboardDataWTKO.KO.geneData[geneName];
+    createGeneExpressionPlotsWTKO(geneName, geneExpressionWT, geneExpressionKO);
+    showMessage("Gène trouvé ! Visualisation comparative de l expression du gène " + geneName + " entre WT et KO générée.", "success");
+  } else {
+    showMessage("Gène " + geneName + " non trouvé dans les données WT/KO chargées.", "error");
+  }
+}
 
-4. **Dans RStudio**, clique sur "Knit" ou utilise : `rmarkdown::render("ton_fichier.Rmd")`
+// Créer les graphiques d expression génique comparatifs WT vs KO
+function createGeneExpressionPlotsWTKO(geneName, geneExpressionWT, geneExpressionKO) {
+  if (!geneExpressionWT || !geneExpressionKO || !dashboardDataWTKO) {
+    showMessage("Données d expression non disponibles pour " + geneName, "error");
+    return;
+  }
+  
+  // Calculer les valeurs min/max communes pour une échelle cohérente
+  const allExpressions = [...geneExpressionWT, ...geneExpressionKO];
+  const maxExpression = Math.max(...allExpressions);
+  const minExpression = Math.min(...allExpressions);
+  
+  // Créer le graphique WT
+  const plotDataWT = [{
+    x: dashboardDataWTKO.WT.cellData.umap1,
+    y: dashboardDataWTKO.WT.cellData.umap2,
+    mode: "markers",
+    type: "scatter",
+    marker: {
+      size: 4,
+      color: geneExpressionWT,
+      colorscale: [
+        [0, "#f0f0f0"],
+        [0.1, "#e0e0e0"],
+        [0.3, "#b0b0f0"],
+        [0.5, "#8080ff"],
+        [0.7, "#4040ff"],
+        [1, "#0000ff"]
+      ],
+      cmin: minExpression,
+      cmax: maxExpression,
+      line: { width: 0.5, color: "white" }
+    },
+    text: geneExpressionWT.map((expr, i) => 
+      "Condition: WT<br>Gène: " + geneName + "<br>Expression: " + expr.toFixed(3) + "<br>Type cellulaire: " + dashboardDataWTKO.WT.cellData.types[i] + "<br>Coordonnées: X=" + dashboardDataWTKO.WT.cellData.umap1[i].toFixed(2) + " | Y=" + dashboardDataWTKO.WT.cellData.umap2[i].toFixed(2)
+    ),
+    hoverinfo: "text",
+    hovertemplate: "%{text}<extra></extra>",
+    name: "WT"
+  }];
+  
+  // Créer le graphique KO
+  const plotDataKO = [{
+    x: dashboardDataWTKO.KO.cellData.umap1,
+    y: dashboardDataWTKO.KO.cellData.umap2,
+    mode: "markers",
+    type: "scatter",
+    marker: {
+      size: 4,
+      color: geneExpressionKO,
+      colorscale: [
+        [0, "#f0f0f0"],
+        [0.1, "#e0e0e0"],
+        [0.3, "#b0b0f0"],
+        [0.5, "#8080ff"],
+        [0.7, "#4040ff"],
+        [1, "#0000ff"]
+      ],
+      colorbar: {
+        title: {
+          text: "Expression<br>" + geneName,
+          font: { size: 10 }
+        },
+        titleside: "right",
+        thickness: 12,
+        len: 0.6,
+        x: 1.02
+      },
+      cmin: minExpression,
+      cmax: maxExpression,
+      line: { width: 0.5, color: "white" }
+    },
+    text: geneExpressionKO.map((expr, i) => 
+      "Condition: KO<br>Gène: " + geneName + "<br>Expression: " + expr.toFixed(3) + "<br>Type cellulaire: " + dashboardDataWTKO.KO.cellData.types[i] + "<br>Coordonnées: X=" + dashboardDataWTKO.KO.cellData.umap1[i].toFixed(2) + " | Y=" + dashboardDataWTKO.KO.cellData.umap2[i].toFixed(2)
+    ),
+    hoverinfo: "text",
+    hovertemplate: "%{text}<extra></extra>",
+    name: "KO"
+  }];
 
-**Exemple de structure d'objet Seurat attendue :**
-```r
-# Ton objet doit avoir :
-objet@reductions$umap@cell.embeddings  # Coordonnées UMAP
-objet@meta.data$ton_type_de_cellule    # Types de cellules
+  // Configuration des layouts pour les graphiques
+  const layoutWT = {
+    title: {
+      text: "Expression de " + geneName + " - WT<br>" + dashboardDataWTKO.WT.cellData.umap1.length + " cellules",
+      font: { size: 14 }
+    },
+    xaxis: {
+      title: "UMAP_1",
+      showgrid: true,
+      gridcolor: "lightgray",
+      titlefont: { size: 12 }
+    },
+    yaxis: {
+      title: "UMAP_2",
+      showgrid: true,
+      gridcolor: "lightgray",
+      titlefont: { size: 12 }
+    },
+    plot_bgcolor: "white",
+    paper_bgcolor: "white",
+    margin: { l: 50, r: 80, t: 80, b: 50 },
+    showlegend: false
+  };
+
+  const layoutKO = {
+    title: {
+      text: "Expression de " + geneName + " - KO<br>" + dashboardDataWTKO.KO.cellData.umap1.length + " cellules",
+      font: { size: 14 }
+    },
+    xaxis: {
+      title: "UMAP_1",
+      showgrid: true,
+      gridcolor: "lightgray",
+      titlefont: { size: 12 }
+    },
+    yaxis: {
+      title: "UMAP_2",
+      showgrid: true,
+      gridcolor: "lightgray",
+      titlefont: { size: 12 }
+    },
+    plot_bgcolor: "white",
+    paper_bgcolor: "white",
+    margin: { l: 50, r: 100, t: 80, b: 50 },
+    showlegend: false
+  };
+
+  // Créer les conteneurs pour les graphiques
+  const container = document.getElementById("dynamic-plots-container");
+  container.style.display = "block";
+  
+  // Calculer les statistiques
+  const avgWT = (geneExpressionWT.reduce((a,b) => a+b, 0) / geneExpressionWT.length).toFixed(3);
+  const maxWT = Math.max(...geneExpressionWT).toFixed(3);
+  const posWT = geneExpressionWT.filter(x => x > 0).length;
+  
+  const avgKO = (geneExpressionKO.reduce((a,b) => a+b, 0) / geneExpressionKO.length).toFixed(3);
+  const maxKO = Math.max(...geneExpressionKO).toFixed(3);
+  const posKO = geneExpressionKO.filter(x => x > 0).length;
+  
+  container.innerHTML = 
+    "<div style=\\"display: flex; flex-wrap: wrap; gap: 20px; justify-content: center;\\">" +
+      "<div id=\\"wt-plot\\" style=\\"width: 48%; min-width: 400px; height: 500px;\\"></div>" +
+      "<div id=\\"ko-plot\\" style=\\"width: 48%; min-width: 400px; height: 500px;\\"></div>" +
+    "</div>" +
+    "<div style=\\"margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 10px;\\">" +
+      "<h4>Statistiques d expression de " + geneName + "</h4>" +
+      "<div style=\\"display: flex; gap: 30px; flex-wrap: wrap;\\">" +
+        "<div><strong>WT:</strong> Moyenne: " + avgWT + " | Max: " + maxWT + " | Cellules positives: " + posWT + "/" + geneExpressionWT.length + "</div>" +
+        "<div><strong>KO:</strong> Moyenne: " + avgKO + " | Max: " + maxKO + " | Cellules positives: " + posKO + "/" + geneExpressionKO.length + "</div>" +
+      "</div>" +
+    "</div>";
+
+  // Afficher les graphiques
+  Plotly.newPlot("wt-plot", plotDataWT, layoutWT, {responsive: true});
+  Plotly.newPlot("ko-plot", plotDataKO, layoutKO, {responsive: true});
+}
+
+// Fonction pour réinitialiser la vue
+function resetView() {
+  document.getElementById("gene-search").value = "";
+  document.getElementById("gene-suggestions").style.display = "none";
+  document.getElementById("dynamic-plots-container").style.display = "none";
+  document.getElementById("gene-results").innerHTML = "";
+  currentGeneWTKO = null;
+  showMessage("Vue réinitialisée", "success");
+}
+
+// Fonction pour afficher les messages
+function showMessage(message, type) {
+  const resultsDiv = document.getElementById("gene-results");
+  let bgColor, textColor, icon;
+  
+  switch(type) {
+    case "success":
+      bgColor = "#d4edda";
+      textColor = "#155724";
+      icon = "✅";
+      break;
+    case "error":
+      bgColor = "#f8d7da";
+      textColor = "#721c24";
+      icon = "❌";
+      break;
+    case "warning":
+      bgColor = "#fff3cd";
+      textColor = "#856404";
+      icon = "⚠️";
+      break;
+    case "loading":
+      bgColor = "#d1ecf1";
+      textColor = "#0c5460";
+      icon = "🔄";
+      break;
+    default:
+      bgColor = "#e2e3e5";
+      textColor = "#383d41";
+      icon = "ℹ️";
+  }
+  
+  resultsDiv.innerHTML = 
+    "<div style=\\"background: " + bgColor + "; color: " + textColor + "; padding: 15px; border-radius: 10px; margin-top: 15px; border-left: 4px solid " + textColor + ";\\">" +
+      icon + " " + message +
+    "</div>";
+  
+  // Auto-hide success messages after 5 seconds
+  if (type === "success") {
+    setTimeout(function() {
+      if (resultsDiv.innerHTML.includes(message)) {
+        resultsDiv.innerHTML = "";
+      }
+    }, 5000);
+  }
+}
+
+// Fonction pour cacher les suggestions quand on clique ailleurs
+document.addEventListener("click", function(event) {
+  const suggestionsDiv = document.getElementById("gene-suggestions");
+  const searchInput = document.getElementById("gene-search");
+  
+  if (suggestionsDiv && searchInput && 
+      !suggestionsDiv.contains(event.target) && 
+      !searchInput.contains(event.target)) {
+    suggestionsDiv.style.display = "none";
+  }
+});
+'
+
+# Injecter le JavaScript de manière sécurisée
+tags$script(HTML(js_code))
 ```
 
-**C'est tout ! Tu auras un fichier HTML interactif !** 🎉
+# Section à ajouter dans votre fichier R Markdown après la section de chargement des données
+
+## 📊 Résumé des Données
+
+```{r tableau_resume, echo=FALSE}
+library(DT)
+library(dplyr)
+
+# Créer le tableau de résumé par type cellulaire
+resume_types_base <- mes_donnees %>%
+  group_by(type_cellule, condition_std) %>%
+  summarise(Nombre = n(), .groups = "drop")
+
+# Créer manuellement le tableau wide format
+types_uniques <- unique(resume_types_base$type_cellule)
+conditions_uniques <- unique(resume_types_base$condition_std)
+
+resume_final_alt <- data.frame(
+  type_cellule = types_uniques,
+  stringsAsFactors = FALSE
+)
+
+# Ajouter les colonnes pour chaque condition
+for(cond in conditions_uniques) {
+  resume_final_alt[[cond]] <- sapply(types_uniques, function(type) {
+    val <- resume_types_base[resume_types_base$type_cellule == type & 
+                            resume_types_base$condition_std == cond, "Nombre"]
+    if(length(val) > 0) return(val$Nombre) else return(0)
+  })
+}
+
+# Calculer le total et pourcentage
+resume_final_alt$Total <- rowSums(resume_final_alt[, conditions_uniques, drop = FALSE])
+resume_final_alt$Pourcentage <- round((resume_final_alt$Total / sum(resume_final_alt$Total)) * 100, 1)
+resume_final_alt <- resume_final_alt[order(-resume_final_alt$Total), ]
+
+# Ajouter la ligne de totaux
+ligne_totaux_alt <- data.frame(
+  type_cellule = "TOTAL",
+  stringsAsFactors = FALSE
+)
+for(cond in conditions_uniques) {
+  ligne_totaux_alt[[cond]] <- sum(resume_final_alt[[cond]])
+}
+ligne_totaux_alt$Total <- sum(resume_final_alt$Total)
+ligne_totaux_alt$Pourcentage <- 100.0
+
+resume_final_complet <- rbind(resume_final_alt, ligne_totaux_alt)
+
+# Créer le tableau interactif avec DT (CORRECTION ICI)
+DT::datatable(
+  resume_final_complet,  # CHANGÉ de graphique_compa à resume_final_complet
+  caption = "Résumé des données - Nombre et pourcentage de cellules par type",
+  options = list(
+    pageLength = 15,
+    scrollX = TRUE,
+    language = list(
+      search = "Rechercher:",
+      lengthMenu = "Afficher _MENU_ entrées par page",
+      info = "Affichage de _START_ à _END_ sur _TOTAL_ entrées",
+      infoEmpty = "Aucune entrée disponible",
+      infoFiltered = "(filtré à partir de _MAX_ entrées au total)"
+    )
+  ),
+  class = "display",
+  rownames = FALSE
+)
+```
