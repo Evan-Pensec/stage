@@ -1,14 +1,292 @@
 ---
 title: "Analyse UMAP - Types Cellulaires Biologiques (WT vs KO)"
 output:
-html_document:
-self_contained: true
-theme: flatly
-toc: true
-toc_float: true
-code_folding: hide
-css: "mon-style.css"
+  html_document:
+    self_contained: true
+    theme: flatly
+    toc: true
+    toc_float: true
+    code_folding: hide
 ---
+
+```{css, echo=FALSE}
+/* CSS Dashboard Biologie - Moderne & Minimaliste */
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  color: #334155;
+  line-height: 1.6;
+}
+
+/* En-têtes avec thème scientifique */
+h1, h2, h3 {
+  color: #1e293b;
+  font-weight: 600;
+  margin: 1.5rem 0 1rem;
+}
+
+/* Graphiques côte à côte - Structure cohérente et responsive */
+.side-by-side-plots {
+  display: flex;
+  gap: 15px;
+  width: 100%;
+  min-height: 500px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.plot-container {
+  flex: 1;
+  min-width: 380px;
+  max-width: calc(50% - 15px);
+  box-sizing: border-box;
+}
+
+/* Conteneurs principaux */
+.main-container {
+  max-width: 100%;
+  margin: 0;
+  padding: 1rem;
+  margin-left: 220px;
+  box-sizing: border-box;
+}
+
+/* Ajustement de la barre de navigation TOC */
+.tocify-wrapper {
+  width: 200px !important;
+  left: 10px !important;
+  position: fixed;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.tocify {
+  width: 180px !important;
+}
+
+/* Élargir le contenu principal */
+.col-md-9 {
+  width: calc(100% - 220px) !important;
+  margin-left: 220px !important;
+  max-width: none !important;
+}
+
+/* Code blocks & pre */
+pre, code {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+pre {
+  padding: 1rem;
+  overflow-x: auto;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* Tableaux scientifiques */
+table {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.07);
+  overflow: hidden;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+thead {
+  background: linear-gradient(90deg, #3b82f6, #1d4ed8);
+  color: white;
+}
+
+th, td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+tbody tr:hover {
+  background: #f8fafc;
+  transition: background 0.2s;
+}
+
+/* Plotly containers - CORRECTION PRINCIPALE */
+.plotly-graph-div {
+  border-radius: 12px !important;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.07) !important;
+  background: white !important;
+  margin: 1rem 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* Interface de recherche */
+.search-container {
+  background: linear-gradient(135deg, #1e293b 0%, #475569 100%);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  color: white;
+  box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+input[type="text"] {
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+/* Boutons */
+button {
+  border: none;
+  border-radius: 25px;
+  padding: 12px 24px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+}
+
+/* Messages d'état */
+.message {
+  border-radius: 10px;
+  padding: 16px;
+  margin: 16px 0;
+  border-left: 4px solid;
+  font-weight: 500;
+}
+
+/* Sections */
+.section {
+  background: white;
+  border-radius: 16px;
+  padding: 2rem;
+  margin: 2rem 0;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  border: 1px solid #e2e8f0;
+}
+
+/* Responsive pour écrans moyens et petits */
+@media (max-width: 1200px) {
+  .main-container {
+    margin-left: 0;
+    padding: 0.5rem;
+  }
+  
+  .plot-container {
+    min-width: 100%;
+    max-width: 100%;
+  }
+  
+  .col-md-9 {
+    width: 100% !important;
+    margin-left: 0 !important;
+  }
+  
+  .tocify-wrapper {
+    display: none;
+  }
+  
+  .side-by-side-plots {
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+
+/* Responsive pour écrans très petits */
+@media (max-width: 768px) {
+  .main-container {
+    padding: 0.25rem;
+  }
+  
+  .side-by-side-plots {
+    gap: 5px;
+  }
+  
+  .plot-container {
+    min-width: 100%;
+  }
+}
+
+/* Styles pour les graphiques dynamiques d'expression génique */
+.dataTables_wrapper {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+table {
+  width: 100% !important;
+  max-width: 100%;
+  table-layout: auto;
+}
+
+/* Conteneur pour les graphiques dynamiques WT/KO */
+#dynamic-plots-container {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+#dynamic-plots-container > div {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 15px !important;
+  justify-content: space-between !important;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Graphiques WT et KO - Taille contrôlée */
+#wt-plot, #ko-plot {
+  width: calc(50% - 10px) !important;
+  min-width: 380px !important;
+  max-width: calc(50% - 10px) !important;
+  height: 500px !important;
+  box-sizing: border-box !important;
+}
+
+/* Responsive pour les graphiques WT/KO */
+@media (max-width: 900px) {
+  #wt-plot, #ko-plot {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+  }
+}
+
+/* Correction spécifique pour les graphiques statiques côte à côte */
+.plotly-graph-div[style*="flex"] {
+  flex: 1 1 calc(50% - 15px) !important;
+  min-width: 380px !important;
+  max-width: calc(50% - 15px) !important;
+}
+
+/* Conteneur flex pour les graphiques statiques WT/KO */
+div[style*="display: flex"] .plotly-graph-div {
+  flex: 1 1 calc(50% - 15px) !important;
+  min-width: 380px !important;
+  max-width: calc(50% - 15px) !important;
+  box-sizing: border-box !important;
+}
+```
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
@@ -107,7 +385,7 @@ if ("condition" %in% colnames(mes_donnees)) {
 
 # Si aucune condition n'est trouvée, créer une condition par défaut
 if (is.null(colonne_condition)) {
-  cat("⚠️ Aucune colonne de condition trouvée. Création d'une division aléatoire WT/KO pour démonstration.\n")
+  cat("Aucune colonne de condition trouvée. Création d'une division aléatoire WT/KO pour démonstration.\n")
   set.seed(123)
   mes_donnees$condition <- sample(c("WT", "KO"), nrow(mes_donnees), replace = TRUE, prob = c(0.5, 0.5))
   colonne_condition <- "condition"
@@ -252,7 +530,7 @@ cat("Cellules WT:", nrow(donnees_wt), "| Cellules KO:", nrow(donnees_ko), "\n")
 
 # Comparaison WT vs KO
 
-## 🔍 Recherche de Gènes
+## Recherche de Gènes
 
 ```{r gene_search_interface, echo=FALSE}
 library(htmltools)
@@ -323,7 +601,7 @@ div(
 
 - **Survol** : Voir les détails de chaque cellule  
 
-```{r creation_graphiques_compares, echo=FALSE}
+```{r creation_graphiques_independants, echo=FALSE}
 # Séparer les données par condition
 donnees_wt <- mes_donnees[mes_donnees$condition_std == "WT", ]
 donnees_ko <- mes_donnees[mes_donnees$condition_std == "KO", ]
@@ -353,14 +631,13 @@ creer_graphique_umap <- function(data, titre, condition) {
       if("nCount_RNA" %in% colnames(data)) paste("<br><b>Nb transcrits:</b>", nCount_RNA) else ""
     ),
     hoverinfo = "text",
-    hovertemplate = "%{text}<extra></extra>",
-    showlegend = if(condition == "WT") TRUE else FALSE  # Afficher la légende seulement pour WT
+    hovertemplate = "%{text}<extra></extra>"
   ) %>%
   layout(
     title = list(
       text = paste("<b>", titre, "</b><br>",
                    "<i>", format(nrow(data), big.mark = " "), "cellules</i>"),
-      font = list(size = 16)
+      font = list(size = 14)
     ),
     xaxis = list(
       title = "<b>UMAP_1</b>",
@@ -380,43 +657,56 @@ creer_graphique_umap <- function(data, titre, condition) {
     ),
     plot_bgcolor = "white",
     paper_bgcolor = "white",
-    margin = list(l = 50, r = 50, t = 80, b = 50)
+    margin = list(l = 50, r = 50, t = 80, b = 50),
+    showlegend = FALSE,
+    legend = list(
+      orientation = "v",
+      x = 1.02,
+      y = 0.5,
+      xanchor = 'left',
+      yanchor = 'middle'
+    )
   )
 }
 
-# Créer les graphiques WT et KO
-graphique_wt <- creer_graphique_umap(donnees_wt, "WT (Wild Type)", "WT")
-graphique_ko <- creer_graphique_umap(donnees_ko, "KO (Knockout)", "KO")
+# Calculer les limites communes pour les axes
+x_range <- range(c(donnees_wt$UMAP_1, donnees_ko$UMAP_1))
+y_range <- range(c(donnees_wt$UMAP_2, donnees_ko$UMAP_2))
 
-# Combiner les graphiques en utilisant subplot
-graphique_combine <- subplot(
-  graphique_wt, graphique_ko,
-  nrows = 1, 
-  shareY = TRUE,
-  titleX = TRUE,
-  margin = 0.05
-) %>%
-layout(
-  title = list(
-    text = paste("<b>Comparaison UMAP des Types Cellulaires : WT vs KO</b><br>",
-                 "<i>Total:", format(nrow(mes_donnees), big.mark = " "), 
-                 "cellules •", length(types_uniques), "types cellulaires</i>"),
-    font = list(size = 18)
+# Créer le graphique WT AVEC légende
+graphique_wt <- creer_graphique_umap(donnees_wt, "WT (Wild Type)", "WT") %>%
+  layout(
+    xaxis = list(range = x_range, title = "<b>UMAP_1</b>", showgrid = TRUE, gridcolor = "lightgray"),
+    yaxis = list(range = y_range, title = "<b>UMAP_2</b>", showgrid = TRUE, gridcolor = "lightgray"),
+    showlegend = TRUE,
+    margin = list(l = 50, r = 100, t = 80, b = 50)  # Plus de marge à droite pour la légende
+  )
+
+# Créer le graphique KO SANS légende
+graphique_ko <- creer_graphique_umap(donnees_ko, "KO (Knockout)", "KO") %>%
+  layout(
+    xaxis = list(range = x_range, title = "<b>UMAP_1</b>", showgrid = TRUE, gridcolor = "lightgray"),
+    yaxis = list(range = y_range, title = "<b>UMAP_2</b>", showgrid = TRUE, gridcolor = "lightgray"),
+    showlegend = FALSE,
+    margin = list(l = 50, r = 50, t = 80, b = 50)  # Marges normales
+  )
+
+# Structure côte à côte avec contrôle de taille
+htmltools::div(
+  style = "display: flex; gap: 15px; width: 100%; flex-wrap: wrap; justify-content: space-between;",
+  
+  # Graphique WT (côté gauche)
+  htmltools::div(
+    style = "flex: 1 1 calc(50% - 10px); min-width: 380px; max-width: calc(50% - 10px); box-sizing: border-box;",
+    graphique_wt
   ),
-  legend = list(
-    orientation = "v",
-    x = 1.02,
-    y = 1,
-    bgcolor = "rgba(255,255,255,0.9)",
-    bordercolor = "gray",
-    borderwidth = 1,
-    font = list(size = 10)
-  ),
-  margin = list(r = 200, l = 50, t = 100, b = 50)
+  
+  # Graphique KO (côté droit) 
+  htmltools::div(
+    style = "flex: 1 1 calc(50% - 10px); min-width: 380px; max-width: calc(50% - 10px); box-sizing: border-box;",
+    graphique_ko
+  )
 )
-
-# Afficher le graphique combiné
-graphique_combine
 ```
 
 ```{r graphique_conteneur_wt_ko, echo=FALSE}
@@ -563,6 +853,16 @@ function createGeneExpressionPlotsWTKO(geneName, geneExpressionWT, geneExpressio
         [0.7, "#4040ff"],
         [1, "#0000ff"]
       ],
+      colorbar: {
+        title: {
+          text: "Expression<br>" + geneName,
+          font: { size: 10 }
+        },
+        titleside: "right",
+        thickness: 12,
+        len: 0.6,
+        x: 1.02
+      },
       cmin: minExpression,
       cmax: maxExpression,
       line: { width: 0.5, color: "white" }
@@ -592,16 +892,6 @@ function createGeneExpressionPlotsWTKO(geneName, geneExpressionWT, geneExpressio
         [0.7, "#4040ff"],
         [1, "#0000ff"]
       ],
-      colorbar: {
-        title: {
-          text: "Expression<br>" + geneName,
-          font: { size: 10 }
-        },
-        titleside: "right",
-        thickness: 12,
-        len: 0.6,
-        x: 1.02
-      },
       cmin: minExpression,
       cmax: maxExpression,
       line: { width: 0.5, color: "white" }
@@ -766,9 +1056,7 @@ document.addEventListener("click", function(event) {
 tags$script(HTML(js_code))
 ```
 
-# Section à ajouter dans votre fichier R Markdown après la section de chargement des données
-
-## 📊 Résumé des Données
+## Résumé des Données
 
 ```{r tableau_resume, echo=FALSE}
 library(DT)
